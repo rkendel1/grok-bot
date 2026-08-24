@@ -1,55 +1,42 @@
-# FeltDB as Authority Substrate: Evaluation
+# FeltDB as Authority Substrate: Evaluation v2
 
-**Status:** Discovery/Architecture Planning  
+**Status:** Architecture Discovery—Authority Boundary Design  
 **Scope:** Grok Bot 0.18 Reconstructed  
-**Objective:** Evaluate and plan FeltDB as the authoritative durable state substrate for the application
+**Objective:** Determine whether FeltDB can provide cross-process durable authority for coordination, with SQLite retained for session-local transcript data
 
 ## Executive Summary
 
-Grok Bot 0.18 Reconstructed is a well-architected desktop application with clear process boundaries and **already has SQLite-based persistence as the authority substrate**. The application manages several categories of persistent state through multiple mechanisms:
+Grok Bot 0.18 Reconstructed has multiple process boundaries (Electron main, host, coordinator) and currently manages application authority in fragmented ways:
 
-- **Session/Turn/Transcript State:** SQLite with WAL (authority) per agent session
-- **Session Metadata & KV Store:** SQLite (authority) per agent session  
-- **Conversation Blobs:** SQLite separate database per agent
-- **Durable Recovery Markers:** JSON files (ack obligations, pending wakes, upgrade state)
-- **Settings & Configuration:** JSON files with atomic writes (temp-file + rename pattern)
-- **Coordinator State:** Process-local with no explicit durability
-- **Usage Records:** Settings JSON (periodic persistence)
-- **Auth/Secrets:** Electron secrets API, NOT durable application state
-- **MCP/Plugin State:** In-memory caches and process-local stores
+- **Session/Transcript:** SQLite per-session (session-local authority, not cross-process)
+- **Coordinator State:** Process-memory only (no durability across restart)
+- **Execution State:** Partial durability (durable markers exist, but ephemeral runtime state)
+- **Idempotency/Deduplication:** Not tracked durably (tool execution may duplicate)
+- **Cross-Process Coordination:** No unified authority layer
 
-### Key Discovery
+### The Central Question
 
-The application **already uses SQLite as the primary durable state authority**, but:
-- Each session/agent has its own isolated SQLite database
-- No cross-session or cross-process coordination via central authority
-- No global transaction log or unified schema
-- Module-level Maps track DB handles (process-local, not durable)
-- Recovery is session-scoped, not application-scoped
+**Can FeltDB provide a unified durable authority boundary that allows multiple processes to safely coordinate turns, executions, and recovery without abandoning SQLite for session data?**
 
 ### Recommendation
 
-**EVALUATE - CONSIDER ADOPTION FOR CROSS-SESSION COORDINATION**
+**ADOPT AS AUTHORITY SUBSTRATE—with SQLite as specialized local layer**
 
-The existing SQLite approach is solid for per-session durability. FeltDB could add value as a **secondary coordination layer** for:
+FeltDB should own:
+- Durable operation identity and lifecycle
+- Idempotency and deduplication keys
+- Execution state transitions
+- Recovery checkpoints
+- Cross-process coordination facts
 
-1. **Cross-session state** (not present in current architecture)
-2. **Global coordination** (coordinator, routing, usage aggregation)
-3. **Multi-process coordination** (beyond per-session isolation)
-4. **Centralized authority** for application-level state
+SQLite should continue to own (by design):
+- Transcript and conversation content
+- Session-local turn data
+- Blob-heavy conversation state
 
-However, the recommendation is **NOT to replace SQLite**, but rather to evaluate whether FeltDB should supplement it for cross-session concerns.
+This is a **unifying architecture**, not an overlay. FeltDB is the substrate; SQLite is a specialized projection for local session data.
 
-**If adopting FeltDB:**
-- Keep SQLite for per-session conversation/turn authority
-- Use FeltDB for global/cross-session state (usage, routing, coordinator sync)
-- Define clear boundaries to avoid duplication
-- FeltDB would require: conditional writes, multi-collection transactions, indexed subscriptions
-
-**Do not adopt if:**
-- Current per-session SQLite approach is sufficient for product goals
-- No cross-session coordination is needed
-- Complexity of dual-substrate architecture outweighs benefits
+The proof-of-concept will be **execution recovery**: prevent duplicate tool execution across process restarts.
 
 ## Architecture Overview
 
@@ -85,88 +72,202 @@ Inference Routers
   └─ Tool Execution
 ```
 
-## Current State Inventory
+## State Classification Framework
+
+Every state item is labeled:
+
+- **A: Durable Authority** — Authoritative source survives process death; reads/writes go here first
+- **B: Durable Projection** — Persistent (survives crash) but explicitly reconstructible from another authority
+- **C: Ephemeral Runtime** — Lost on crash; intentionally reconstructed on restart
+- **D: Unknown** — Not yet established from code inspection
+
+This prevents conflating "stored somewhere" with "authoritative."
+
+---
+
+## Current State Inventory & Authority Analysis
 
 ### 1. Settings & Configuration
 
-**Current Authority:** JSON files on disk  
-**Storage:** `SandSettingsStore` (atomic file writes)  
-**State Owner:** Electron main  
-**Durability:** Full (filesystem persistence)  
-**Multi-writer:** No (single-process)  
+**Classification:** A (Durable Authority, currently JSON)  
+**Storage:** `SandSettingsStore` (atomic file writes via temp+rename)  
+**State Owner:** Electron main process (exclusive writer)  
+**Current Durability:** Full (filesystem)  
+**Multi-writer Scenario:** No (single process)  
 **Includes:**
 - Theme preferences
 - Update track selection
 - MCP server configuration
 - Auto-review instructions
-- Local tool permissions
 - Inference provider selection
-- Box runtime (remote vs local)
-- Sidebar sections
+- Box runtime choice (remote vs. local Docker)
 - Timezone overrides
 - Agent model selection
 
-**Candidate for FeltDB:** Optional  
-**Priority:** Low  
-**Note:** Works well with JSON; migration would be low-risk but low-value. Could consolidate if centralizing all state.
+**Authority Question:** Should settings authority remain with Electron main (via JSON), or move to FeltDB for cross-process visibility?
+
+**Decision:** Keep as-is for v1. Electron main remains settings authority. Host/coordinator read via RPC if they need settings (rare). Rationale: Settings are low-churn, rarely conflict, and Electron-main-as-coordinator is acceptable for this domain.
 
 ### 2. Session & Conversation Lifecycle
 
-**Current Authority:** SQLite per-session database (`agent.db` in `{agentId}/` directory)  
-**Storage:** `SandAgentDb` (SQLite with WAL mode)  
-**State Owner:** Host process (exclusive access per session)  
-**Durability:** Full (SQLite WAL ensures durability and recovery)  
-**Multi-writer:** Single writer per session (enforced by `liveDbHandleCount()` check)  
-**Includes:**
-- Session identity & metadata (UUID agentId)
-- Conversation transcript entries
-- KV store (metadata, profile, memory, etc.)
-- Turn state (seq numbers, markers)
-- Execution checkpoints
+**CRITICAL CONTRADICTION RESOLVED:**
 
-**Candidate for FeltDB:** NO (replace SQLite)  
-**Candidate for FeltDB:** YES (supplement for cross-session queries)  
-**Priority:** Medium (if need cross-session access patterns)  
-**Note:** SQLite per-session is already durable and crash-safe. FeltDB would only add value for cross-session coordination (querying state across multiple agents, global ledger).
+Previous documents said "SQLite is authority" but also "Session identity in-memory" and "Turns are partial."
 
-### 3. Turn Execution State
+**Truth established from code audit:**
 
-**Current Authority:** SQLite (durable markers) + process-local state  
-**Storage:** 
-  - Durable: SQLite transcript entries, checkpoint markers, ack obligations
-  - Ephemeral: RunLifecycle Maps (`inFlightRunCounts`, `sessionActivities`)
-**State Owner:** Host process (turn-runtime.ts, transcript-manager.ts)  
-**Durability:** Partial (durable framework, ephemeral details)  
-**Multi-writer:** No (single host process, exclusive session access)  
-**Includes:**
-- Turn progress & status (entries in SQLite)
-- Tool execution results (in transcript entries)
-- Ack obligations (durable state store)
-- Pending background work (durable JSON marker file)
-- Error/retry state (in-memory, re-driven from durable markers)
+| Item | Classification | Authority | Durability |
+|------|---|---|---|
+| Session identity (agentId) | **A** (Durable Authority) | SQLite agent.db + JSON pointer | Full |
+| Conversation transcript | **A** (Durable Authority) | SQLite agent.db | Full (WAL) |
+| Turn state (seq, markers) | **A** (Durable Authority) | SQLite transcript_entries | Full |
+| KV metadata store | **A** (Durable Authority) | SQLite agent.db | Full |
+| Ack obligations | **A** (Durable Authority) | Durable marker (JSON file) | Full |
+| Pending wakes | **A** (Durable Authority) | sand-pending-wake.json | Full |
 
-**Candidate for FeltDB:** NO (SQLite sufficient)  
-**Priority:** N/A  
-**Note:** Current approach is solid. Ack obligations and pending wakes already provide durability for recovery. No FeltDB gap identified.
+**Current Storage:** SQLite per-session (`{agentId}/agent.db`)  
+**State Owner:** Host process (exclusive handle per session via `liveDbHandleCount()`)  
+**Crash Recovery:** WAL replay on next open; durable markers re-arm on restart  
+**Multi-Process Access:** No (single host process, exclusive per-session)
 
-### 4. Coordinator State
+**FeltDB Role (Proposed):**
 
-**Current Authority:** Process-local in coordinator child process  
-**Storage:** Runtime memory (JavaScript object graph)  
-**State Owner:** Coordinator process  
-**Durability:** None (crash-lost, but can be re-initiated)  
-**Multi-writer:** Single process (external clients via IPC)  
-**Includes:**
-- Transcript routing tables
-- Streaming activity (active streams)
-- Reaction event handlers
-- MCP bridge state
-- Message queues (transient)
-- OAuth pending registry
+FeltDB should NOT replace SQLite for session data. Instead:
 
-**Candidate for FeltDB:** YES - for centralized routing  
-**Priority:** Medium  
-**Rationale:** Coordinator crash loses routing state. FeltDB could provide durable message queue + routing table, allowing coordination to survive restarts. But current fire-and-forget approach works if clients re-connect on coordinator restart.
+1. **FeltDB owns: Turn/execution identity across process boundaries**
+   - Turn identity (TurnID) known to multiple processes
+   - Execution state queryable from host, coordinator, recovery
+   - Idempotency keys visible to multiple processes
+
+2. **SQLite owns: Session-local turn content**
+   - Actual transcript entries
+   - Message content
+   - Conversation state blobs
+   - Remain session-scoped, optimized for single-session queries
+
+**Decision:** This is a **layering**, not a replacement.
+
+```
+FeltDB: Turn identity, lifecycle, idempotency
+   ↓
+Host process
+   ↓
+SQLite: Turn content (local session DB)
+```
+
+### 3. Turn Execution State & Idempotency
+
+**THE REAL AUTHORITY GAP:**
+
+Current state management does NOT prevent duplicate tool execution across process restarts.
+
+Current flow:
+```
+Accept turn
+  ↓
+Durable marker written (ack obligations, pending wakes)
+  ↓
+Host process executes turn + tools
+  ↓
+Process crashes DURING tool execution or before result commit
+  ↓
+Restart
+  ↓
+Recovery replays from durable markers
+  ↓
+But: Host has no way to know if tool #123 already executed
+  ↓
+Tool may execute twice → side effects duplicated
+```
+
+**Current Classification:**
+
+| Item | Classification | Authority | Durability |
+|------|---|---|---|
+| Turn acceptance | **A** (Authority) | Ack obligations (JSON) | Full |
+| Turn execution status | **C** (Ephemeral) | In-memory RunLifecycle | Lost on crash |
+| Tool call identity | **D** (Unknown) | Depends on tool_call tracking | **GAP** |
+| Tool execution result | **B** (Projection) | SQLite transcript, but no idempotency key | Partial |
+| Idempotency tracking | **D** (Unknown) | **NOT TRACKED** | **MISSING—Critical Gap** |
+| Recovery checkpoint | **C** (Ephemeral) | None for mid-execution | **MISSING—Critical Gap** |
+
+**The FeltDB Solution:**
+
+FeltDB provides the missing authority layer:
+
+```
+Operation {
+  operationId: UUID,
+  status: enum (accepted | executing | completed | failed),
+  idempotencyKey: string,
+  resultSnapshot: Uint8Array,
+  checkpoint: Uint8Array,
+}
+```
+
+With guarantees:
+1. **Idempotent writes** — same `operationId` + `idempotencyKey` cannot be re-executed
+2. **Durable state machine** — status transitions are durable before proceeding
+3. **Exactly-once semantics** — recovery can query by ID and know whether to retry, resume, or skip
+
+**Decision:** This is where FeltDB demonstrates its value. SQLite is not sufficient because:
+- SQLite is session-local; tool execution may involve multiple processes
+- No cross-process idempotency tracking
+- Retry logic is implicit and unsafe
+- Recovery is guesswork
+
+### 4. Coordinator State & Recovery
+
+**Classification:**
+
+| Item | Classification | Authority | Durability |
+|------|---|---|---|
+| Routing tables | **C** (Ephemeral) | In-memory coordinator state | Lost on crash |
+| Message buffers | **C** (Ephemeral) | In-memory queues | Lost on crash |
+| Streaming activity | **C** (Ephemeral) | Live socket/stream handles | Lost on crash |
+| OAuth pending state | **C** (Ephemeral) | In-memory Map | Lost on crash |
+| **Durable coordination facts** | **D** (Unknown) | **MISSING** | **MISSING** |
+
+**The Problem:**
+
+Coordinator crash = all in-flight coordination lost. Clients must reconnect and resend. Works if clients expect this, but:
+1. No durability of accepted-but-not-yet-executed operations
+2. No message queue guarantees
+3. No ordering guarantees across restarts
+4. Streaming disrupted
+
+**The FeltDB Opportunity:**
+
+FeltDB can provide durable coordination operations:
+
+```
+CoordinatorOperation {
+  operationId: UUID,
+  sequence: number,
+  type: enum (route | stream_open | stream_close | reaction),
+  payload: JSON,
+  status: enum (accepted | in_flight | completed),
+  frontier: number,  // Last processed sequence
+}
+```
+
+**Recovery Protocol:**
+
+```
+On coordinator restart:
+  1. Query FeltDB for last frontier/checkpoint
+  2. Fetch all operations since that frontier
+  3. Replay operations in sequence order
+  4. Re-establish routing state
+  5. Notify clients of frontier so they know what already executed
+  6. Clients can request results from past operations if desired
+```
+
+**Critical Design Point:**
+
+Operations must be **durable before coordinator acknowledges** to client. NOT fire-and-forget shadow-writes. This is the actual authority test.
+
+**Decision:** FeltDB + durable operation protocol enables true coordination across restarts.
 
 ### 5. Usage Records & Analytics
 
@@ -274,154 +375,209 @@ Inference Routers
 
 ---
 
-## Process Boundary Analysis
+## Cross-Process Authority Model
+
+**CRITICAL ARCHITECTURAL DECISION:**
+
+Grok Bot has three separate processes: Electron main, coordinator, host. They cannot share live objects. FeltDB integration must account for this.
+
+### Process Boundary Model: Shared FeltDB Authority
+
+```
+Electron Main ──────┐
+Host/Agent ─────────┼──> FeltDB authority (shared local access)
+Coordinator ────────┘
+                        │
+                        ├─ operation: status, idempotency
+                        ├─ execution: state machine
+                        ├─ recovery: checkpoint frontier
+                        └─ coordination: operation sequence
+```
+
+**Key Point:** Each process has its own FeltDB client connection to the same authority database. Not "Electron passes FeltDB object to Host." That doesn't work across process boundaries.
 
 ### Electron Main Process
 
 **Responsibilities:**
 - Application lifecycle
-- Settings management
-- Auth/secrets handling
-- Coordinator ownership
-- Box connector management
-- Renderer bridge (preload)
-- Window state persistence
+- Settings authority (JSON, unchanged for v1)
+- Secrets (system keychain, NEVER in FeltDB)
+- Coordinator process lifecycle
+- Window/desktop integration
 
 **Durable State Owned:**
-- Settings (JSON file via `SandSettingsStore`)
-- Secrets (system keychain, NOT application state)
-- Usage summary (periodic persistence to settings)
+- Settings (JSON via `SandSettingsStore`)
+- Secrets (system keychain)
 
 **Ephemeral State:**
 - Coordinator child process handle
-- Box connection handles
-- Renderer communication ports
-- Module-level tracking Maps
+- Window state
+- Box connector handles
 
-**SQLite Interaction:** No (host process owns session databases)
-
-**FeltDB Opportunity:** Could own global settings/config if centralizing
-
-### Coordinator Process (Child)
-
-**Responsibilities:**
-- Gateway communication / transport
-- OAuth loopback registry
-- MCP tool relaying
-- Message routing (transient)
-- Streaming state (transient)
-
-**Durable State Owned:**
-- None (all state is ephemeral and process-local)
-
-**Ephemeral State:**
-- Transport generation tracking
-- Message routing tables
-- Stream handles
-- OAuth pending registry (in-memory Map)
-
-**SQLite Interaction:** No direct access (queries via host)
-
-**FeltDB Opportunity:** Could own durable message queue + routing log (enables restart without re-connection)
+**FeltDB Interaction:** Read-only (reads operations, executions for status if needed)
 
 ### Host Process
 
 **Responsibilities:**
-- **Owner of all session/agent databases**
-- Session creation/deletion
+- Session/agent lifecycle
 - Turn execution
-- Transcript management
-- Background work tracking
-- Ack obligation enforcement
-- Upgrade & recovery coordination
+- Tool execution
+- Recovery logic
+- Durable marker management
 
 **Durable State Owned:**
-- Session SQLite databases (`{agentId}/agent.db`)
-- Conversation blob databases (`{agentId}/conversation-blobs.db`)
-- Durable recovery markers (JSON files)
-  - Ack obligations
-  - Pending wakes (`sand-pending-wake.json`)
-  - Upgrade markers
-- Profile & settings per session (JSON)
-- Active agent pointer (atomic rename)
+- SQLite per-session DBs (`{agentId}/agent.db`)
+- Recovery markers (JSON)
+- **NEW: Exclusive writer to FeltDB operation/execution authority**
 
 **Ephemeral State:**
-- RunLifecycle Maps (in-flight counters)
+- RunLifecycle in-memory state
 - Active tool processes
 - Provider connections
-- Streaming buffers
 
-**SQLite Interaction:** Exclusive handle per session (enforced by `liveDbHandleCount()`)
+**FeltDB Interaction:** Read/write operations, executions, checkpoints (primary authority writer)
 
-**FeltDB Opportunity:** Could share turn metadata across sessions (if needed)
+### Coordinator Process
+
+**Responsibilities:**
+- Message routing
+- Streaming activity
+- MCP bridging
+- Tool invocation routing
+
+**Durable State Owned:**
+- None (all authority is ephemeral until FeltDB integration)
+
+**Ephemeral State:**
+- Routing tables
+- Stream handles
+- Message buffers
+
+**FeltDB Interaction (Post-Integration):** Read/write to coordinator_operations (ordered operations, recovery frontier)
 
 ### Renderer (React)
 
 **Responsibilities:**
 - UI rendering
-- User input handling
-- Display state
-- Streaming display buffer
+- User interaction
 
 **Durable State Owned:**
 - None
 
 **Ephemeral State:**
-- UI forms
-- Scroll position
-- Modal state
-- Streaming UI buffers
+- UI forms, scroll, modal state
 
-**SQLite/FeltDB Interaction:** None (all reads via RPC to host)
+**FeltDB Interaction:** None (reads via RPC)
 
 ---
 
-## Authority vs. Projection Analysis
+## Integration Architecture: NOT Electron → Host
 
-### Authority State (Durable Truth)
+**DO NOT DO:** Pass FeltDB object from Electron main to Host process.
 
-State that must be authoritative and persist across crashes:
+```typescript
+// WRONG:
+const feltdb = new FeltDB(...);
+launchHost({ feltdb });  // Can't pass object across process boundary
+```
 
-| Domain | Current Owner | Proposed FeltDB Owner |
-|--------|---------------|----------------------|
-| Settings | JSON file | FeltDB `settings` |
-| Sessions | Blob store | FeltDB `sessions` |
-| Turns | Blob store | FeltDB `turns` |
-| Tool calls | Blob store | FeltDB `tool_calls` |
-| Execution state | Process-local | FeltDB `executions` |
-| Message queue | Process-local | FeltDB `coordinator_messages` |
-| Usage records | Settings | FeltDB `usage_events` |
-| Recovery checkpoints | None | FeltDB `recovery_checkpoints` |
+**DO THIS:** Each process creates its own client to the same FeltDB authority:
 
-### Projection State (Derived, Reconstructible)
+```typescript
+// Electron main
+const feltdbConfig = { rootPath: app.getPath('userData') };
+const feltdbElectron = new FeltDB(feltdbConfig);
 
-State that can be rebuilt from authority:
+// Separately, Host process
+const feltdbHost = new FeltDB(feltdbConfig);
 
-| Domain | Current | Proposed |
-|--------|---------|----------|
-| UI state | Renderer memory | Renderer memory (per-session) |
-| Streaming buffers | Runtime memory | Can be cleared on restart |
-| MCP catalog | Runtime cache | Can be fetched from servers |
-| Provider capabilities | Runtime state | Can be derived from settings + provider APIs |
-| Dashboard summaries | Settings | Can be computed from FeltDB usage events |
+// Both connect to same authority database
+```
 
-### Ephemeral State (Process-Local Only)
+This is transparent if FeltDB uses local file-based authority (likely), but explicit if it uses network/service model.
 
-State that should never be durable:
+---
+
+## Authority Boundary: What FeltDB Owns
+
+### Durable Authority (FeltDB)
+
+FeltDB becomes the source of truth for cross-process coordination:
+
+| Domain | FeltDB Collection | Semantics | Guarantees |
+|--------|---|---|---|
+| **Operation Identity** | `operation` | Uniquely identify work accepted by the system | Immutable, durable, replayable |
+| **Idempotency** | `idempotency_key` | Same key + operation cannot be duplicated | Atomic check-and-set |
+| **Execution State** | `execution` | Track whether operation executed, failed, or pending | State machine transitions are durable |
+| **Recovery Checkpoint** | `checkpoint` | Last known-good state before operation started | Durable frontier for restart |
+| **Coordination Sequence** | `coordinator_operation` | Ordered sequence of routing/streaming operations | Sequence number, causal ordering |
+
+### Durable Projection (SQLite)
+
+SQLite remains authoritative for session-local data, but is now a *projection* of operation results:
+
+| Domain | SQLite DB | Derived From | Read Authority |
+|--------|---|---|---|
+| **Transcript Entries** | Session DB | Operation results (from FeltDB) | SQLite for read performance |
+| **Turn Content** | Session DB | Operation results + user messages | SQLite for local access |
+| **Message Blobs** | Session DB | Tool execution results | SQLite for locality |
+| **Session Metadata** | Session DB | Session creation + maintenance ops | SQLite (local) |
+
+**Key Property:** Transcript data survives crashes (WAL), but derives from FeltDB operations. If you lose SQLite session DB, you can reconstruct from FeltDB operations + replayable tool execution.
+
+### Ephemeral State (Process Memory)
+
+Must NEVER be durable:
 
 | Domain | Reason |
 |--------|--------|
-| Active sockets | Cannot serialize/restore |
-| AbortControllers | Lifecycle is process-tied |
-| Child process handles | OS resource, not data |
-| PTY handles | Terminal I/O state |
-| In-flight promises | Can be re-executed |
-| Renderer subscriptions | Communication artifact |
-| Transient buffers | Intermediate data |
+| Sockets, streams | Cannot serialize/deserialize |
+| Process handles, PTYs | OS resources, not data |
+| AbortControllers, promises | Tied to process lifecycle |
+| UI state | Renderer-local only |
+| MCP server connections | Renegotiate on startup |
+| Tool execution processes | Re-launch on restart |
 
 ---
 
-## Current Authority Bugs & Issues
+## The Proof-of-Concept: Execution Recovery
+
+**The killer use case that proves FeltDB's value:**
+
+**Scenario:** Tool call execution across process restart
+
+```
+1. Turn accepted, durable operation record created in FeltDB
+2. Host process starts tool execution
+3. Tool #123 begins (e.g., shell command, API call)
+4. Process crashes BEFORE tool result is committed
+5. System restarts
+6. Recovery: Query FeltDB for operation status
+7. FeltDB says: "Tool #123 is in EXECUTING state"
+8. Recovery: Check idempotency key → matches previous attempt
+9. Recovery: Tool #123 should NOT be re-executed (prevent duplicate)
+10. Recovery: Check for cached result or mark as FAILED
+11. Turn continues or is marked FAILED appropriately
+```
+
+**Why SQLite alone cannot do this:**
+- Tool execution is cross-process (host + sandbox)
+- SQLite is session-local; sandbox doesn't have access
+- No durably-recorded idempotency key
+- No recovery frontier across restarts
+
+**Why FeltDB is essential:**
+- Operation ID is durable and cross-process
+- Idempotency key prevents duplicate execution
+- Coordinator + host + recovery can all query the same authority
+- Restart can discover incomplete operations
+- **Exactly-once semantics are guaranteed**
+
+This single scenario justifies FeltDB adoption.
+
+---
+
+## Identified Authority Bugs & Gaps
 
 ### Authority Smell: Restart-Sensitive IDs
 
@@ -475,6 +631,51 @@ State that should never be durable:
 **Current Status:** No idempotency keys in current code
 
 **FeltDB Solution:** Durable idempotency record per tool call
+
+---
+
+## Authority Writing Rule: Blocking vs. Fire-and-Forget
+
+**CRITICAL RULE FOR FELTDB AUTHORITY:**
+
+No FeltDB operation may be described as authoritative if failure of that operation can be ignored after the application has externally acknowledged the state transition.
+
+### Authoritative Writes (BLOCKING)
+
+These must complete durably before the application acknowledges success:
+
+```typescript
+// Accept an operation
+operation = {
+  operationId: UUID,
+  status: ACCEPTED,
+  idempotencyKey: ...,
+};
+
+// MUST wait for FeltDB write to complete
+await feltdb.operation.put(operation);
+
+// ONLY THEN acknowledge to caller
+return { accepted: true, operationId };
+```
+
+If FeltDB write fails, the mutation does not complete. Caller does not proceed.
+
+### Non-Authoritative Writes (Fire-and-Forget)
+
+These can fail without affecting application state:
+
+```typescript
+// Log usage telemetry
+await feltdb.usage_event.put(event).catch(err => {
+  log.warn('Telemetry write failed', err);
+  // Application continues; loss is acceptable
+});
+```
+
+**Current Violation:** The previous proposal made coordinator events "fire-and-forget shadow writes." That contradicts the definition of authority.
+
+**Fix:** Coordinator events MUST be blocking if FeltDB is the authority. Fire-and-forget is only acceptable for telemetry/audit logs.
 
 ---
 
@@ -734,77 +935,129 @@ Maps to: Crash recovery, state reconstruction
 
 ---
 
-## Migration Strategy (Phased)
+## Implementation Roadmap
 
-### Phase 0: Discovery (This PR)
-- [ ] Document current authority boundaries
-- [ ] Identify FeltDB gaps
-- [ ] Design FeltDB collections
-- [ ] Create migration plan
-- [ ] Get architectural approval
+### Phase 0: Discovery ✓ (Complete)
 
-### Phase 1: FeltDB Adapter
-- [ ] Create `AuthorityStore` application interface
-- [ ] Implement FeltDB-backed store
-- [ ] Keep existing persistence alongside
-- [ ] No behavior changes
+Completed:
+- [x] Audit current authority model
+- [x] Identify cross-process gaps
+- [x] Document execution recovery use case
+- [x] Clarify FeltDB role as substrate
 
-### Phase 2: Settings Migration
-- [ ] Dual-read/shadow-write settings
-- [ ] Validate FeltDB and file are in sync
-- [ ] Cutover reads to FeltDB
-- [ ] Remove file persistence
+### Phase 1: Vertical Slice (Execution Recovery)
 
-### Phase 3: Session/Turn Authority
-- [ ] Durable session creation
-- [ ] Durable turn tracking
-- [ ] Recovery on restart
-- [ ] Coordinator integration
+**Goal:** Prove FeltDB as authority for exactly-once execution
 
-### Phase 4: Execution State
-- [ ] Tool call durability
-- [ ] Execution recovery
-- [ ] Idempotency tracking
-- [ ] Crash recovery testing
+**Scope:**
+1. Implement FeltDB `operation` + `execution` collections
+2. Tool execution writes durable operation record BEFORE executing
+3. Idempotency key prevents duplicate execution
+4. Restart: query FeltDB, discover incomplete operation, skip re-execution
+5. Test: kill process mid-tool-execution, restart, verify no duplicate
 
-### Phase 5: Coordinator Durability
-- [ ] Message queue persistence
-- [ ] Event log
-- [ ] Recovery protocols
+**Success Criteria:**
+- Tool execution is guaranteed exactly-once
+- Recovery finds incomplete operations
+- Restart respects idempotency keys
 
-### Phase 6: Cleanup
-- [ ] Remove obsolete blob stores
-- [ ] Remove unused file persistence
-- [ ] Verify no regressions
+**Do NOT do in this phase:**
+- Coordinator recovery
+- Settings migration
+- Cross-session queries
+- Broad adapter
+
+**Why this first:** Smallest vertical slice that proves the authority substrate works.
+
+### Phase 2: Coordinator Durability
+
+**Goal:** Enable coordinator to recover operations without client re-sends
+
+**Scope:**
+1. Implement FeltDB `coordinator_operation` collection
+2. Coordinator writes operation durably BEFORE executing
+3. Restart: replay operations since last frontier
+4. Clients: can query past operation results if desired
+
+**Success Criteria:**
+- Coordinator restart does not lose in-flight operations
+- Message ordering is preserved
+- Duplicate operations are prevented
+
+### Phase 3: Recovery Orchestration
+
+**Goal:** Comprehensive crash recovery across process boundaries
+
+**Scope:**
+1. Implement FeltDB `recovery_checkpoint` collection
+2. Mark frontier after successful operation completion
+3. Restart: resume from last checkpoint
+4. Test kill/restart scenarios
+
+### Phase 4: Defer
+
+Settings, usage analytics, cross-session queries: defer until later if needed.
+
+No adoption of these without clear product requirement.
 
 ---
 
 ## Risk Assessment
 
 ### Low Risk
-- Settings migration (currently working, well-understood)
-- Usage records (non-critical, can fall back)
+- **Vertical slice execution recovery** (small scope, can roll back, high value proof)
 
 ### Medium Risk
-- Session/turn authority (high value but requires careful recovery logic)
-- Provider routing state (touches multiple processes)
+- **Coordinator durability** (touches multiple processes, needs careful protocol)
+- **Recovery orchestration** (testing-intensive, crash scenarios complex)
 
 ### High Risk
-- Coordinator durability (complex state machine, many processes interact)
-- Execution recovery (must handle partial failures correctly)
-- Process crash scenarios (testing-intensive)
+- **Replacing SQLite** (NOT planned; would lose session-local benefits)
+- **Fire-and-forget authority writes** (contradiction; don't do this)
+
+---
+
+## FeltDB Capability Validation
+
+Before proceeding, validate against FeltDB v0.4.17+ capabilities discovered in Paseo:
+
+- [x] **Atomic admission** — needed for operation acceptance
+- [x] **Durable operation persistence** — needed for operation tracking
+- [x] **Durable deduplication** — needed for idempotency
+- [x] **Immutable records** — needed for event log
+- [x] **Sequence numbering** — needed for coordinator ordering
+- [ ] **Conditional writes / putIfAbsent** — TBD (not blocking for v1)
+- [ ] **Subscriptions** — TBD (not blocking for v1)
+
+If any critical capability is missing, identify as blocker before Phase 1.
+
+---
+
+## Final Recommendation
+
+**ADOPT FeltDB AS AUTHORITY SUBSTRATE**
+
+Proceed with:
+1. Phase 1 vertical slice (execution recovery)
+2. Validate on that slice
+3. Proceed to phases 2+ based on success
+
+Do NOT proceed with:
+- Settings migration (not needed yet)
+- Usage analytics (telemetry, not authority)
+- Broad adapter pattern
+- Fire-and-forget authority writes
+- Replacing SQLite for transcript data
 
 ---
 
 ## Next Steps
 
-1. **Complete the codebase audit** (Exploration agent findings)
-2. **Build authority map** (detailed state inventory)
-3. **Design authority model** (exact FeltDB collections + mutation rules)
-4. **Create migration plan** (PR breakdown + dependencies)
-5. **Document FeltDB gaps** (specific substrate needs)
-6. **Get stakeholder review** (architecture alignment)
-7. **Begin Phase 1** (FeltDB adapter implementation)
+1. **Revise FELTDB-AUTHORITY-MODEL.md** (aggregate-based schema, not relational)
+2. **Revise FELTDB-MIGRATION-PLAN.md** (vertical slice approach)
+3. **Revise FELTDB-GAPS.md** (use Paseo findings, not unknowns)
+4. **Get stakeholder alignment** (architecture + Paseo team)
+5. **Begin Phase 1.1** (FeltDB client + operation collection)
 
 ---
 
