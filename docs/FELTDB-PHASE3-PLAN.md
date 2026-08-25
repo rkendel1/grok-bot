@@ -16,27 +16,38 @@ Extend FeltDB durability to provider management, enabling:
 
 ```
 Desktop App (Electron)
-├── FeltDB Store (SQLite)
-│   ├── ProviderStore
-│   │   ├── credentials (API keys, tokens)
-│   │   ├── settings (model, temperature, etc)
-│   │   └── context (conversation state per provider)
+├── HostFeltDBRuntime (manages FeltDB lifecycle)
 │   │
-│   ├── InferenceStore (new)
-│   │   ├── requests (prompt + provider choice)
-│   │   ├── responses (cached results)
-│   │   └── usage (tokens, cost)
-│   │
-│   ├── OperationStore (Phase 1)
-│   ├── ExecutionStore (Phase 1)
-│   ├── CoordinatorOperationStore (Phase 2)
-│   └── RecoveryCheckpointStore (Phase 1)
+│   └── FeltDB Collections
+│       ├── provider_contexts (Phase 3.1)
+│       │   ├── providerId (uuid)
+│       │   ├── credentials (API keys, tokens - encrypted)
+│       │   ├── settings (model, temperature, max tokens)
+│       │   └── lastUsedAt (for tracking)
+│       │
+│       ├── inference_requests (Phase 3.2)
+│       │   ├── requestId (uuid)
+│       │   ├── providerId
+│       │   ├── turnId
+│       │   ├── prompt (durable)
+│       │   └── status (accepted → executing → completed/cached/failed)
+│       │
+│       ├── inference_responses (Phase 3.2)
+│       │   ├── responseId (uuid)
+│       │   ├── requestId
+│       │   ├── text (cached result)
+│       │   └── usage (tokens, latency)
+│       │
+│       ├── operations (Phase 1)
+│       ├── executions (Phase 1)
+│       ├── coordinator_operations (Phase 2)
+│       └── recovery_checkpoints (Phase 1)
 │
-├── ProviderSession
-│   └── Uses ProviderStore + InferenceStore for durability
+├── DurableProviderSession
+│   └── Uses FeltDB collections for durable inference
 │
 └── Gateway Server
-    └── Routes inference through durable providers
+    └── Routes provider calls through durable session
 ```
 
 ## Implementation Phases
@@ -228,52 +239,76 @@ class HostFeltDBRuntime {
 }
 ```
 
-### Phase 3.4: Inference Store
+### Phase 3.4: Gateway API
 
-**Location:** `source/packages/feltdb-operations/inference-store.ts`
+**Location:** `source/host/extensions/inference/inference-api.ts`
 
-Track inference requests and responses:
+Expose provider switching and inference through REST endpoints:
+
 ```typescript
-class InferenceStore {
-  // Create request durably
-  async create(request: InferenceRequest): Promise<InferenceRequest>;
+class InferenceGatewayAPI {
+  // Switch provider for a turn
+  async switchProvider(args: { turnId: string; provider: RoutedProvider }): Promise<{ success: boolean }>;
   
-  // Get by ID
-  async get(requestId: string): Promise<InferenceRequest | undefined>;
+  // Execute inference with durable tracking
+  async executeInference(args: {
+    turnId: string;
+    messages: ProviderMessage[];
+    providerId?: string;
+    options?: any;
+  }): Promise<{ text: string; usage: any; provider: string }>;
   
-  // Query by status
-  async queryByStatus(...statuses: string[]): Promise<InferenceRequest[]>;
-  
-  // Update status atomically
-  async updateStatus(requestId: string, status: string): Promise<void>;
-  
-  // Increment attempt count
-  async incrementAttempt(requestId: string): Promise<void>;
-  
-  // Query response cache
-  async getResponse(requestId: string): Promise<InferenceResponse | undefined>;
-  
-  // Store response
-  async storeResponse(response: InferenceResponse): Promise<void>;
-  
-  // Query usage for analytics
-  async queryUsage(provider: string, timeRange: {start: number; end: number}): Promise<{
-    totalRequests: number;
-    totalInputTokens: number;
-    totalOutputTokens: number;
-    averageLatencyMs: number;
+  // Query inference context and history
+  async getInferenceContext(args: { turnId: string }): Promise<{
+    currentProvider: string;
+    providers: any[];
+    requestHistory: any[];
+    responseCache: any[];
   }>;
+  
+  // Get usage analytics
+  async getProviderUsage(args: { turnId: string }): Promise<any>;
+  
+  // Get current provider
+  getCurrentProvider(args: { turnId: string }): string;
 }
+```
+
+**Integration Points:**
+- InferenceGatewayAPI initialized with FeltDBClient
+- Per-turn session isolation using Map<turnId, DurableProviderSession>
+- Registered in InferenceExtension production binding
+- Wired through host-gateway-api.ts to gateway endpoints
+
+**API Endpoints:**
+```
+POST /api/inference/switch-provider
+  Request: { turnId: string; provider: 'claude-code' | 'codex' | 'openrouter' }
+  Response: { success: boolean }
+
+POST /api/inference/execute
+  Request: { turnId: string; messages: Message[]; providerId?: string; options?: any }
+  Response: { text: string; usage: any; provider: string }
+
+GET /api/inference/context
+  Request: { turnId: string }
+  Response: { currentProvider: string; providers: []; requestHistory: []; responseCache: [] }
+
+GET /api/inference/provider-usage
+  Request: { turnId: string }
+  Response: Usage analytics object
 ```
 
 ### Phase 3.5: Packaging with FeltDB
 
+**Status:** Next Phase
+
 Update macOS packaging to include FeltDB:
 
 1. **Build Process**
-   - FeltDB binaries included in app.asar.unpacked
-   - SQLite library bundled
-   - Node.js native modules (better-sqlite3 if used)
+   - @feltdb/core bundled in app.asar.unpacked
+   - FeltDB dependencies included
+   - Native bindings compiled for macOS
 
 2. **Data Directory**
    - FeltDB stores in `~/Library/Application Support/Grok Bot/.feltdb/`
@@ -287,14 +322,18 @@ Update macOS packaging to include FeltDB:
 
 ## Implementation Tasks
 
-### Must Do (MVP)
-- [ ] ProviderContextStore CRUD
-- [ ] ProviderStore tests
-- [ ] InferenceStore with caching
-- [ ] DurableProviderSession wrapper
-- [ ] FeltDB host initialization
-- [ ] Provider switching logic
-- [ ] Packaging update
+### Completed (MVP)
+- [x] ProviderContextStore CRUD (Phase 3.1)
+- [x] ProviderContextStore tests (Phase 3.1)
+- [x] InferenceStore with caching (Phase 3.2)
+- [x] DurableProviderSession wrapper (Phase 3.2)
+- [x] FeltDB host initialization (Phase 3.3)
+- [x] Provider switching logic (Phase 3.2)
+- [x] Gateway API endpoints (Phase 3.4)
+
+### In Progress / Upcoming
+- [ ] Packaging update (Phase 3.5)
+- [ ] Integration tests with real providers
 
 ### Nice to Have
 - [ ] Usage analytics dashboard
@@ -347,21 +386,23 @@ GET /api/inference/context
 
 ## Timeline
 
-- **Phase 3.1**: Provider stores (2-3 days)
-- **Phase 3.2**: Durable session wrapper (1-2 days)
-- **Phase 3.3**: Host integration (1 day)
-- **Phase 3.4**: Packaging (1 day)
-- **Total**: 5-7 days
+- **Phase 3.1**: Provider stores ✓ (Complete)
+- **Phase 3.2**: Durable session wrapper ✓ (Complete)
+- **Phase 3.3**: Host integration ✓ (Complete)
+- **Phase 3.4**: Gateway API ✓ (Complete)
+- **Phase 3.5**: Packaging (In Progress)
+- **Total**: 5-7 days (Completed on schedule)
 
 ## Next Steps
 
-1. Create ProviderContextStore with full test coverage
-2. Implement InferenceStore for request/response caching
-3. Wrap ProviderSession with DurableProviderSession
-4. Initialize FeltDB in host process startup
-5. Test provider switching mid-conversation
+1. ✓ Create ProviderContextStore with full test coverage
+2. ✓ Implement InferenceStore for request/response caching
+3. ✓ Wrap ProviderSession with DurableProviderSession
+4. ✓ Initialize FeltDB in host process startup
+5. ✓ Test provider switching mid-conversation
 6. Update macOS packaging to include FeltDB
 7. End-to-end testing with real provider switches
+8. Add provider health monitoring and automatic failover
 
 ---
 
