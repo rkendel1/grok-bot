@@ -209,14 +209,36 @@ No duplicate work
 - Recovery: Crash-restart scenarios
 - Provider: Switching and context preservation
 
+## Phase 3.4: Gateway API (Implemented)
+
+REST endpoints for provider switching and inference execution:
+
+```
+POST /api/inference/switch-provider
+  ├─ Input: { turnId, provider }
+  ├─ Per-turn session isolation
+  └─ Response: { success: boolean }
+
+POST /api/inference/execute
+  ├─ Input: { turnId, messages, providerId?, options? }
+  ├─ Creates InferenceRequest in FeltDB
+  ├─ Executes with durable tracking
+  ├─ Caches response automatically
+  └─ Response: { text, usage, provider }
+
+GET /api/inference/context
+  ├─ Input: { turnId }
+  ├─ Queries FeltDB for full history
+  └─ Response: { currentProvider, providers, requestHistory, responseCache }
+```
+
+**Architecture:**
+- InferenceGatewayAPI per-turn sessions
+- Each session wraps DurableProviderSession
+- Automatic session creation and lifecycle
+- FeltDB as persistent backend
+
 ## Future Phases
-
-### Phase 3.4: Gateway API
-
-Endpoints for provider switching:
-- `POST /api/inference/switch-provider` - Change active provider
-- `POST /api/inference/execute` - Execute on specific provider
-- `GET /api/inference/context` - Query provider and history
 
 ### Phase 3.5: macOS App Packaging
 
