@@ -3,6 +3,7 @@ node_modules/
 /.build/
 /dist/
 /src/app/dist/
+dist/
 /recovered/
 /recovery/
 /reports/

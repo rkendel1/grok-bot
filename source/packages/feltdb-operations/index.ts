@@ -6,11 +6,24 @@ export type {
   CoordinatorOperation,
 } from './types.js';
 
+export type {
+  ProviderContext,
+  ProviderContextStoreOptions,
+} from './provider-context-store.js';
+
+export type {
+  InferenceRequest,
+  InferenceResponse,
+  InferenceStoreOptions,
+} from './inference-store.js';
+
 // Stores
 export { OperationStore, type OperationStoreOptions } from './operation-store.js';
 export { ExecutionStore, type ExecutionStoreOptions } from './execution-store.js';
 export { RecoveryCheckpointStore, type RecoveryCheckpointStoreOptions } from './recovery-checkpoint-store.js';
 export { CoordinatorOperationStore, type CoordinatorOperationStoreOptions } from './coordinator-operation-store.js';
+export { ProviderContextStore } from './provider-context-store.js';
+export { InferenceStore } from './inference-store.js';
 
 // Client
 export { FeltDBClient, type FeltDBClientOptions } from './feltdb-client.js';

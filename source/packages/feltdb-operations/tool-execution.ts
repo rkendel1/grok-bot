@@ -164,13 +164,16 @@ export async function recoverIncompleteExecutions(
         // 4. If multiple retry attempts, mark as failed
         if (executions.length > 3) {
           await feltdbClient.operations.updateStatus(operation.operationId, 'failed');
-          recovered.set(operation.operationId, {
-            success: false,
-            error: 'Max retries exceeded',
-            operationId: operation.operationId,
-            executionId: executions[0].executionId,
-            fromCache: false,
-          });
+          const firstExecution = executions[0];
+          if (firstExecution) {
+            recovered.set(operation.operationId, {
+              success: false,
+              error: 'Max retries exceeded',
+              operationId: operation.operationId,
+              executionId: firstExecution.executionId,
+              fromCache: false,
+            });
+          }
         }
       } catch (err) {
         console.error(`Error recovering operation ${operation.operationId}:`, err);

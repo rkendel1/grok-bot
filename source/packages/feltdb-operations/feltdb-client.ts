@@ -3,6 +3,8 @@ import { OperationStore } from './operation-store.js';
 import { ExecutionStore } from './execution-store.js';
 import { RecoveryCheckpointStore } from './recovery-checkpoint-store.js';
 import { CoordinatorOperationStore } from './coordinator-operation-store.js';
+import { ProviderContextStore } from './provider-context-store.js';
+import { InferenceStore } from './inference-store.js';
 
 export interface FeltDBClientOptions {
   rootPath: string;
@@ -24,6 +26,8 @@ export class FeltDBClient {
   readonly executions: ExecutionStore | null = null;
   readonly checkpoints: RecoveryCheckpointStore | null = null;
   readonly coordinatorOperations: CoordinatorOperationStore | null = null;
+  readonly providerContexts: ProviderContextStore | null = null;
+  readonly inference: InferenceStore | null = null;
 
   constructor(options: FeltDBClientOptions) {
     this.rootPath = options.rootPath;
@@ -52,6 +56,8 @@ export class FeltDBClient {
       (this as any).executions = new ExecutionStore(this.feltdb);
       (this as any).checkpoints = new RecoveryCheckpointStore(this.feltdb);
       (this as any).coordinatorOperations = new CoordinatorOperationStore(this.feltdb);
+      (this as any).providerContexts = new ProviderContextStore({ db: this.feltdb, rootPath: this.rootPath });
+      (this as any).inference = new InferenceStore({ db: this.feltdb, rootPath: this.rootPath });
 
       // Initialize coordinator with last known sequence
       if (this.coordinatorOperations) {
