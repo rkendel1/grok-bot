@@ -72,6 +72,20 @@ export function createHostGatewayApi(
   const localToolPermission = deps.extensions.api("local-tool-permission");
   const telemetry = deps.extensions.api("telemetry");
   const sharing = deps.extensions.api("cross-user-sharing");
+  const inferenceBase = deps.extensions.api("inference");
+
+  // Phase 3.4: Wrap inference extension with gateway API methods if available
+  const inference: DynamicGatewayApi = inferenceBase;
+  if (typeof (inferenceBase as any).inferenceApi === 'object' && inferenceBase.inferenceApi !== null) {
+    // Add inference gateway API methods if they exist
+    const api = (inferenceBase as any).inferenceApi;
+    inference.switchProvider = api.switchProvider?.bind(api);
+    inference.executeInference = api.executeInference?.bind(api);
+    inference.getInferenceContext = api.getInferenceContext?.bind(api);
+    inference.getProviderUsage = api.getProviderUsage?.bind(api);
+    inference.getCurrentProvider = api.getCurrentProvider?.bind(api);
+  }
+
   const now = deps.now ?? Date.now;
   const createAgentMintsByNonce = new Map<string, Promise<any>>();
 
@@ -661,6 +675,18 @@ export function createHostGatewayApi(
     setBoxSecrets: ({ secrets }: any) =>
       method(deps.extensions.api("secrets"), "set")({ secrets }),
     getBoxSecretsStatus: () =>
-      method(deps.extensions.api("secrets"), "getStatus")()
+      method(deps.extensions.api("secrets"), "getStatus")(),
+
+    // Phase 3.4: Inference Gateway API
+    switchInferenceProvider: async (args: any) =>
+      await method(inference, "switchProvider")(args),
+    executeInference: async (args: any) =>
+      await method(inference, "executeInference")(args),
+    getInferenceContext: async (args: any) =>
+      await method(inference, "getInferenceContext")(args),
+    getProviderUsage: async (args: any) =>
+      await method(inference, "getProviderUsage")(args),
+    getCurrentInferenceProvider: (args: any) =>
+      method(inference, "getCurrentProvider")(args)
   };
 }

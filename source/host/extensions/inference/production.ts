@@ -3,16 +3,26 @@ import type { SandAgentModelSelection } from "../../../shared/agents/sand-agent-
 import { createCursorWebFetchService, createCursorWebSearchService } from "./cursor-web-tools.js";
 import { createHostInference } from "./inference-service.js";
 import type { InferenceExtensionContext } from "./extension.js";
+import { InferenceGatewayAPI } from "./inference-api.js";
+import type { FeltDBClient } from "../../../packages/feltdb-operations/feltdb-client.js";
 
 type ProductionContext = HostExtensionContext<unknown> & {
-  readonly deps: InferenceExtensionContext["deps"];
+  readonly deps: InferenceExtensionContext["deps"] & { feltdb?: FeltDBClient };
 };
 
 /** Recreates the artifact's concrete inference construction at host-main.cjs:617672-617732. */
 export function createInferenceProductionExtras(
   context: ProductionContext,
-): Omit<InferenceExtensionContext, "deps"> {
+): Omit<InferenceExtensionContext, "deps"> & { inferenceApi?: InferenceGatewayAPI } {
   const auth = context.deps.auth;
+  const feltdb = context.deps.feltdb;
+
+  // Create inference gateway API if FeltDB is available
+  let inferenceApi: InferenceGatewayAPI | undefined;
+  if (feltdb) {
+    inferenceApi = new InferenceGatewayAPI(feltdb);
+  }
+
   return {
     createPort(onModelExperimentApplied) {
       return createHostInference({
@@ -39,6 +49,8 @@ export function createInferenceProductionExtras(
         ...(request.onRequestId == null ? {} : { onRequestId: request.onRequestId }),
       });
     },
+    // Phase 3.4: Inference Gateway API
+    ...(inferenceApi ? { inferenceApi } : {}),
   };
 }
 
