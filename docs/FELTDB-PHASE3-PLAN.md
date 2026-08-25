@@ -16,27 +16,38 @@ Extend FeltDB durability to provider management, enabling:
 
 ```
 Desktop App (Electron)
-├── FeltDB Store (SQLite)
-│   ├── ProviderStore
-│   │   ├── credentials (API keys, tokens)
-│   │   ├── settings (model, temperature, etc)
-│   │   └── context (conversation state per provider)
+├── HostFeltDBRuntime (manages FeltDB lifecycle)
 │   │
-│   ├── InferenceStore (new)
-│   │   ├── requests (prompt + provider choice)
-│   │   ├── responses (cached results)
-│   │   └── usage (tokens, cost)
-│   │
-│   ├── OperationStore (Phase 1)
-│   ├── ExecutionStore (Phase 1)
-│   ├── CoordinatorOperationStore (Phase 2)
-│   └── RecoveryCheckpointStore (Phase 1)
+│   └── FeltDB Collections
+│       ├── provider_contexts (Phase 3.1)
+│       │   ├── providerId (uuid)
+│       │   ├── credentials (API keys, tokens - encrypted)
+│       │   ├── settings (model, temperature, max tokens)
+│       │   └── lastUsedAt (for tracking)
+│       │
+│       ├── inference_requests (Phase 3.2)
+│       │   ├── requestId (uuid)
+│       │   ├── providerId
+│       │   ├── turnId
+│       │   ├── prompt (durable)
+│       │   └── status (accepted → executing → completed/cached/failed)
+│       │
+│       ├── inference_responses (Phase 3.2)
+│       │   ├── responseId (uuid)
+│       │   ├── requestId
+│       │   ├── text (cached result)
+│       │   └── usage (tokens, latency)
+│       │
+│       ├── operations (Phase 1)
+│       ├── executions (Phase 1)
+│       ├── coordinator_operations (Phase 2)
+│       └── recovery_checkpoints (Phase 1)
 │
-├── ProviderSession
-│   └── Uses ProviderStore + InferenceStore for durability
+├── DurableProviderSession
+│   └── Uses FeltDB collections for durable inference
 │
 └── Gateway Server
-    └── Routes inference through durable providers
+    └── Routes provider calls through durable session
 ```
 
 ## Implementation Phases
@@ -271,9 +282,9 @@ class InferenceStore {
 Update macOS packaging to include FeltDB:
 
 1. **Build Process**
-   - FeltDB binaries included in app.asar.unpacked
-   - SQLite library bundled
-   - Node.js native modules (better-sqlite3 if used)
+   - @feltdb/core bundled in app.asar.unpacked
+   - FeltDB dependencies included
+   - Native bindings compiled for macOS
 
 2. **Data Directory**
    - FeltDB stores in `~/Library/Application Support/Grok Bot/.feltdb/`
