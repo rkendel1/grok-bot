@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { FeltDBClient } from './feltdb-client.js';
+import type { RecoveryCheckpoint } from './types.js';
 
 export interface RecoveryProgress {
   lastProcessedOperationId?: string;
@@ -150,10 +151,10 @@ export class RecoverySystem {
       throw new Error('FeltDB checkpoints store not initialized');
     }
 
-    const checkpoint = {
+    const checkpoint: RecoveryCheckpoint = {
       checkpointId: randomUUID(),
       scope: 'process' as const,
-      lastProcessedOperationId: progress.lastProcessedOperationId,
+      ...(progress.lastProcessedOperationId && { lastProcessedOperationId: progress.lastProcessedOperationId }),
       lastProcessedSequence: progress.lastProcessedSequence,
       createdAt: Date.now(),
       processId: this.processId,

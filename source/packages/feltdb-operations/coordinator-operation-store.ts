@@ -70,7 +70,34 @@ export class CoordinatorOperationStore {
   }
 
   /**
-   * Mark coordinator operation as acknowledged (status transition).
+   * Mark coordinator operation as in-flight (sent to coordinator).
+   */
+  async markInFlight(operationId: string): Promise<CoordinatorOperation> {
+    const current = await this.get(operationId);
+    if (!current) {
+      throw new Error(`Coordinator operation ${operationId} not found`);
+    }
+
+    if (current.status !== 'accepted') {
+      return current;
+    }
+
+    const updated: CoordinatorOperation = {
+      ...current,
+      status: 'in_flight',
+    };
+
+    try {
+      const coll = this.db.collection<CoordinatorOperation>(this.collectionName);
+      await coll.update(operationId, updated);
+      return updated;
+    } catch (err) {
+      throw new Error(`Failed to mark operation in-flight ${operationId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /**
+   * Mark coordinator operation as acknowledged (received by destination).
    */
   async acknowledge(operationId: string): Promise<CoordinatorOperation> {
     const current = await this.get(operationId);
