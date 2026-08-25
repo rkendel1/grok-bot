@@ -14,3 +14,11 @@ export { CoordinatorOperationStore, type CoordinatorOperationStoreOptions } from
 
 // Client
 export { FeltDBClient, type FeltDBClientOptions } from './feltdb-client.js';
+
+// Tool Execution Integration
+export {
+  executeToolWithFeltDB,
+  recoverIncompleteExecutions,
+  type ToolExecutionOptions,
+  type ToolExecutionResult,
+} from './tool-execution.js';
