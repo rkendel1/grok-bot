@@ -25,3 +25,6 @@ export {
 
 // Recovery System
 export { RecoverySystem, runRecovery, type RecoveryProgress } from './recovery-system.js';
+
+// Telemetry & Observability
+export { Telemetry, telemetry, type OperationMetrics, type ExecutionMetrics, type RecoveryMetrics, type QueryMetrics, type DurabilityMetrics } from './telemetry.js';
