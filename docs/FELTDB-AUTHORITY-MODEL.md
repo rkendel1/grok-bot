@@ -238,15 +238,23 @@ GET /api/inference/context
 - Automatic session creation and lifecycle
 - FeltDB as persistent backend
 
-## Future Phases
+## Phase 3.5: macOS App Packaging (Implemented)
 
-### Phase 3.5: macOS App Packaging
+Bundle FeltDB with app for zero external dependencies:
 
-Bundle FeltDB with app:
-- @feltdb/core in app.asar.unpacked
+**Features:**
+- @feltdb/core bundled in app.asar.unpacked
 - Data persists in ~/.../Grok Bot/.feltdb/
-- Zero external dependencies
-- Time Machine backups supported
+- Platform-aware paths (macOS/Linux/Windows)
+- Time Machine backup compatibility
+- Automatic startup recovery
+- IPC handlers for renderer access
+
+**Integration Points:**
+- AppFeltDBPaths: Platform-specific directory management
+- AppFeltDBIntegration: Main process lifecycle management
+- bundleFeltDB script: Build-time bundling
+- HostFeltDBRuntime: Durable state management
 
 ## Design Rationale
 

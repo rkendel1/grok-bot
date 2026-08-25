@@ -11,6 +11,7 @@ import {
 } from "./config.mjs";
 import { packStagedAppWithIntegrity } from "./asar-integrity.mjs";
 import { resolveRuntimeApp } from "./runtime.mjs";
+import { bundleFeltDB, verifyFeltDBBundle, createFeltDBManifest } from "../bundle-feltdb.mjs";
 
 export const reconstructedUpdaterGuard = [
   "// Reconstructed-build guard: do not consume official update or telemetry services.",
@@ -160,6 +161,16 @@ export async function buildAsar({
     await cp(source, destination, { recursive: true, dereference: false, preserveTimestamps: true });
   }
   await stageElectronRuntimeDependencyResolution(path.join(stageRoot, "dist", "deps"));
+
+  // Phase 3.5: Bundle FeltDB with app
+  try {
+    const nodeModulesUnpacked = path.join(unpackedRoot, "node_modules");
+    await bundleFeltDB({ unpackedRoot, stageRoot });
+    await verifyFeltDBBundle({ unpackedRoot });
+    await createFeltDBManifest({ unpackedRoot, stageRoot });
+  } catch (error) {
+    console.error("Warning: Failed to bundle FeltDB, continuing without it:", error.message);
+  }
 
   const mainBundle = path.join(stageRoot, "dist", "electron-main", "main.cjs");
   let mainSource = await readFile(mainBundle, "utf8");
