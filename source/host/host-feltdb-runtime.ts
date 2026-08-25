@@ -88,7 +88,9 @@ export class HostFeltDBRuntime {
       // Recovery for Phase 1: Tool Executions
       if (this.feltdb.executions && this.feltdb.operations) {
         try {
-          const pendingOperations = await this.feltdb.operations.queryByStatus('accepted', 'executing');
+          const acceptedOps = await this.feltdb.operations.queryByStatus('accepted');
+          const executingOps = await this.feltdb.operations.queryByStatus('executing');
+          const pendingOperations = [...acceptedOps, ...executingOps];
           if (pendingOperations.length > 0) {
             this.log.log(`[host-feltdb] found ${pendingOperations.length} pending operations to recover`);
           }
@@ -100,7 +102,9 @@ export class HostFeltDBRuntime {
       // Recovery for Phase 2: Coordinator Operations
       if (this.feltdb.coordinatorOperations) {
         try {
-          const pendingCoordinatorOps = await this.feltdb.coordinatorOperations.queryByStatus('accepted', 'in_flight');
+          const acceptedCoordOps = await this.feltdb.coordinatorOperations.queryByStatus('accepted');
+          const inFlightCoordOps = await this.feltdb.coordinatorOperations.queryByStatus('in_flight');
+          const pendingCoordinatorOps = [...acceptedCoordOps, ...inFlightCoordOps];
           if (pendingCoordinatorOps.length > 0) {
             this.log.log(`[host-feltdb] found ${pendingCoordinatorOps.length} pending coordinator operations to recover`);
           }
@@ -158,7 +162,7 @@ export class HostFeltDBRuntime {
    */
   async getDiagnostics(): Promise<{
     initialized: boolean;
-    felldbPath?: string;
+    feltdbPath?: string;
     operationsPending?: number;
     coordinatorOpsPending?: number;
     inferenceRequestsPending?: number;
@@ -177,13 +181,15 @@ export class HostFeltDBRuntime {
       diagnostics.feltdbPath = join(this.sandRootDir, '.feltdb');
 
       if (this.feltdb.operations) {
-        const pendingOps = await this.feltdb.operations.queryByStatus('accepted', 'executing');
-        diagnostics.operationsPending = pendingOps.length;
+        const acceptedOps = await this.feltdb.operations.queryByStatus('accepted');
+        const executingOps = await this.feltdb.operations.queryByStatus('executing');
+        diagnostics.operationsPending = acceptedOps.length + executingOps.length;
       }
 
       if (this.feltdb.coordinatorOperations) {
-        const pendingOps = await this.feltdb.coordinatorOperations.queryByStatus('accepted', 'in_flight');
-        diagnostics.coordinatorOpsPending = pendingOps.length;
+        const acceptedOps = await this.feltdb.coordinatorOperations.queryByStatus('accepted');
+        const inFlightOps = await this.feltdb.coordinatorOperations.queryByStatus('in_flight');
+        diagnostics.coordinatorOpsPending = acceptedOps.length + inFlightOps.length;
       }
 
       if (this.feltdb.inference) {

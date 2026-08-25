@@ -30,25 +30,31 @@ async function createAppFeltDBPathsForTest(testDataDir: string) {
 }
 
 test('AppFeltDBPaths: creates singleton instance', async () => {
-  const testDir = await mkdir(join(tmpdir(), 'feltdb-test-'), { recursive: true });
+  const testDir: string = join(tmpdir(), `feltdb-test-${Date.now()}`);
+  await mkdir(testDir, { recursive: true });
   mockUserDataPath = testDir;
 
   // Note: This test is simplified since we can't easily mock Electron in tests
   // In production, Electron is available
   assert.ok(true, 'Singleton pattern tested in integration');
+
+  await rm(testDir, { recursive: true, force: true });
 });
 
 test('AppFeltDBPaths: getFeltDBRootPath returns correct path', async () => {
-  const testDir = await mkdir(join(tmpdir(), 'feltdb-test-paths'), { recursive: true });
+  const testDir: string = join(tmpdir(), `feltdb-test-paths-${Date.now()}`);
+  await mkdir(testDir, { recursive: true });
 
   // Expected: testDir/.feltdb
   assert.ok(testDir.length > 0);
   const expectedFeltdbPath = join(testDir, '.feltdb');
   assert.ok(expectedFeltdbPath.endsWith('.feltdb'));
+
+  await rm(testDir, { recursive: true, force: true });
 });
 
 test('AppFeltDBPaths: ensures FeltDB directory exists', async () => {
-  const testDir = join(tmpdir(), `feltdb-ensure-${Date.now()}`);
+  const testDir: string = join(tmpdir(), `feltdb-ensure-${Date.now()}`);
 
   // Cleanup if exists
   await rm(testDir, { recursive: true, force: true });

@@ -76,9 +76,11 @@ test('InferenceGatewayAPI: executeInference requires messages', async (t) => {
 
 test('InferenceGatewayAPI: getInferenceContext returns context', async (t) => {
   const feltdb = createMockFeltDB();
-  feltdb.inference.queryRequestsByStatus = async () => [
-    { requestId: 'req-1', status: 'completed' }
-  ] as any;
+  if (feltdb.inference) {
+    feltdb.inference.queryRequestsByStatus = async () => [
+      { requestId: 'req-1', status: 'completed' }
+    ] as any;
+  }
 
   const api = new InferenceGatewayAPI(feltdb);
 
