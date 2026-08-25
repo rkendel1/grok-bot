@@ -128,10 +128,11 @@ test('HostFeltDBRuntime: recovery identifies pending operations', async (t) => {
   if (feltdb.operations) {
     await feltdb.operations.create({
       operationId: 'test-op-1',
-      kind: 'tool-execution',
-      status: 'accepting',
-      version: 1,
+      kind: 'execution',
+      status: 'accepted',
       createdAt: Date.now(),
+      idempotencyKey: 'key-1',
+      authorityProcess: 'main',
     });
   }
 

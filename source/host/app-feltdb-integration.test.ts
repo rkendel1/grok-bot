@@ -4,10 +4,9 @@ import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-let testDataDir: string;
-
 test('AppFeltDBIntegration: initializes FeltDB', async () => {
-  testDataDir = await mkdir(join(tmpdir(), `feltdb-app-test-${Date.now()}`), { recursive: true });
+  const testDataDir: string = join(tmpdir(), `feltdb-app-test-${Date.now()}`);
+  await mkdir(testDataDir, { recursive: true });
 
   // Integration test - verify singleton pattern works
   assert.ok(testDataDir.length > 0);
@@ -17,7 +16,8 @@ test('AppFeltDBIntegration: initializes FeltDB', async () => {
 });
 
 test('AppFeltDBIntegration: prevents double initialization', async () => {
-  testDataDir = await mkdir(join(tmpdir(), `feltdb-app-test-${Date.now()}`), { recursive: true });
+  const testDataDir: string = join(tmpdir(), `feltdb-app-test-${Date.now()}`);
+  await mkdir(testDataDir, { recursive: true });
 
   // Verify logic: calling initialize twice should throw
   // (This is tested through the implementation)
@@ -27,7 +27,8 @@ test('AppFeltDBIntegration: prevents double initialization', async () => {
 });
 
 test('AppFeltDBIntegration: provides FeltDB client access', async () => {
-  testDataDir = await mkdir(join(tmpdir(), `feltdb-app-test-${Date.now()}`), { recursive: true });
+  const testDataDir: string = join(tmpdir(), `feltdb-app-test-${Date.now()}`);
+  await mkdir(testDataDir, { recursive: true });
 
   // Verify singleton pattern and client access
   assert.ok(true, 'Client access verified in implementation');
@@ -36,7 +37,8 @@ test('AppFeltDBIntegration: provides FeltDB client access', async () => {
 });
 
 test('AppFeltDBIntegration: shutdown clears instance', async () => {
-  testDataDir = await mkdir(join(tmpdir(), `feltdb-app-test-${Date.now()}`), { recursive: true });
+  const testDataDir: string = join(tmpdir(), `feltdb-app-test-${Date.now()}`);
+  await mkdir(testDataDir, { recursive: true });
 
   // Verify shutdown behavior
   assert.ok(true, 'Shutdown verified in implementation');
@@ -45,7 +47,8 @@ test('AppFeltDBIntegration: shutdown clears instance', async () => {
 });
 
 test('AppFeltDBIntegration: isReady reflects initialization state', async () => {
-  testDataDir = await mkdir(join(tmpdir(), `feltdb-app-test-${Date.now()}`), { recursive: true });
+  const testDataDir: string = join(tmpdir(), `feltdb-app-test-${Date.now()}`);
+  await mkdir(testDataDir, { recursive: true });
 
   // Before init: not ready
   // After init: ready
@@ -56,7 +59,8 @@ test('AppFeltDBIntegration: isReady reflects initialization state', async () => 
 });
 
 test('AppFeltDBIntegration: getDiagnostics returns state', async () => {
-  testDataDir = await mkdir(join(tmpdir(), `feltdb-app-test-${Date.now()}`), { recursive: true });
+  const testDataDir: string = join(tmpdir(), `feltdb-app-test-${Date.now()}`);
+  await mkdir(testDataDir, { recursive: true });
 
   // Diagnostics should report initialization state
   assert.ok(true, 'Diagnostics verified in implementation');

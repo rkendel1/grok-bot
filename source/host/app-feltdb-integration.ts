@@ -84,12 +84,11 @@ export class AppFeltDBIntegration {
       }
 
       const requests = await this.feltdb.inference.queryRequestsByStatus('completed');
-      const responses = await this.feltdb.inference.queryResponses?.();
 
       return {
         turnId,
         requests: requests || [],
-        responses: responses || []
+        responses: []
       };
     });
 

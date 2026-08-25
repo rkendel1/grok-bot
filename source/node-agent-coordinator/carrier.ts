@@ -142,9 +142,10 @@ export function adoptParentPort(_parentPort: PortLike, handoff: { readonly data:
 export function adoptCarrier(): Promise<CarrierIntake> {
   const parentPort = (process as NodeJS.Process & { readonly parentPort?: unknown }).parentPort;
   if (parentPort != null && isPortLike(parentPort)) {
+    const port = parentPort as PortLike;
     return new Promise((resolve) => {
-      parentPort.on("message", (event) => resolve(adoptParentPort(parentPort, { data: event.data, ports: event.ports ?? [] })));
-      parentPort.start?.();
+      port.on("message", (event) => resolve(adoptParentPort(port, { data: event.data, ports: event.ports ?? [] })));
+      port.start?.();
     });
   }
   return Promise.resolve(adoptForkIpc(process.argv));
