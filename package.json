@@ -49,6 +49,7 @@
     "@bufbuild/protobuf": "1.10.1",
     "@connectrpc/connect": "1.6.1",
     "@connectrpc/connect-node": "1.6.1",
+    "@feltdb/core": "^0.5.7",
     "@jimp/core": "1.6.0",
     "@jimp/js-bmp": "1.6.0",
     "@jimp/js-gif": "1.6.0",
