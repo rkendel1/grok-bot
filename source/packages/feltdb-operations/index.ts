@@ -22,3 +22,6 @@ export {
   type ToolExecutionOptions,
   type ToolExecutionResult,
 } from './tool-execution.js';
+
+// Recovery System
+export { RecoverySystem, runRecovery, type RecoveryProgress } from './recovery-system.js';
