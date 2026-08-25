@@ -7,12 +7,22 @@
 
 ## Executive Summary
 
-We have implemented a comprehensive durable data substrate for Grok Bot using FeltDB (SQLite-backed state-first database). This enables:
+We have implemented a comprehensive durable data substrate for Grok Bot using **FeltDB** - a state-first database abstraction with atomic transactions and exactly-once semantics. This enables:
 
-1. **Exactly-once tool execution** (Phase 1) - Tool results survive crashes
-2. **Durable coordinator operations** (Phase 2) - Routing state is persistent
-3. **Provider context management** (Phase 3.1) - Switch providers without losing context
-4. **Desktop app integration** (Phase 3.2-4) - Self-hosted FeltDB with provider switching
+1. **Exactly-once tool execution** (Phase 1) - Tool results survive crashes without re-execution
+2. **Durable coordinator operations** (Phase 2) - All routing and streaming state is persistent
+3. **Provider context management** (Phase 3.1) - API credentials and settings stored durably
+4. **Durable provider sessions** (Phase 3.2) - Switch between providers mid-conversation while preserving context
+5. **Self-hosted FeltDB** (Phase 3.3) - Host process manages FeltDB lifecycle with automatic recovery
+6. **Desktop app integration** (Phase 3.4-4) - Bundled FeltDB with macOS app for zero external dependencies
+
+**FeltDB provides:**
+- State-first API with blocking writes (authority semantics)
+- Atomic version transitions (immutable aggregates)
+- Idempotency via SHA-256 hashing (no duplicate execution)
+- Frontier-based recovery (efficient replay boundaries)
+- Collections for structured data access
+- Persistence layer agnostic (SQLite via better-sqlite3)
 
 ## Complete Implementation Timeline
 
@@ -222,10 +232,10 @@ GET /api/inference/context
 **Files to modify:** scripts/package-macos.mjs, scripts/build.mjs
 
 **What it does:**
-- Bundle FeltDB (SQLite) with app
-- Include Node native modules
-- Set up data directory
-- Ensure permissions/backups
+- Bundle @feltdb/core with app for self-hosted operation
+- Include better-sqlite3 native bindings
+- Set up persistent data directory
+- Ensure proper file permissions and backup integration
 
 **Directory structure:**
 ```
@@ -236,6 +246,7 @@ Grok Bot.app/
     │       └── node_modules/
     │           ├── @feltdb/core/
     │           └── better-sqlite3/
+    │               └── build/Release/better_sqlite3.node
     └── ...
 ```
 
@@ -243,18 +254,23 @@ Grok Bot.app/
 ```
 ~/Library/Application Support/Grok Bot/
 └── .feltdb/
-    ├── grok-bot-host.sqlite
-    ├── operations/
-    ├── executions/
-    ├── inference/
-    └── provider_contexts/
+    ├── grok-bot-host.db
+    └── Collections:
+        ├── operations/ (Phase 1: tool executions)
+        ├── executions/ (Phase 1: execution results)
+        ├── recovery_checkpoints/ (Phase 1: recovery markers)
+        ├── coordinator_operations/ (Phase 2: routing state)
+        ├── provider_contexts/ (Phase 3: provider credentials)
+        ├── inference_requests/ (Phase 3: inference requests)
+        └── inference_responses/ (Phase 3: response cache)
 ```
 
 **Impact:**
-- Single self-contained app
-- FeltDB data persists across app versions
-- Time Machine backups work
-- No external dependencies
+- Single self-contained app with no external service dependencies
+- FeltDB state-first architecture ensures exactly-once semantics
+- Data persists across app versions with schema versioning
+- Time Machine backups preserve all state automatically
+- Complete durability: tool executions, routing, provider context, and inference all survive crashes
 
 ## Architecture Overview
 
@@ -265,13 +281,13 @@ User Action
     ↓
 Gateway API
     ↓
-ProviderSession (with durability)
+DurableProviderSession (with FeltDB integration)
     ↓
-FeltDB Stores ← Authority semantics (blocking writes)
+Create InferenceRequest in FeltDB
     ↓
 Execute Provider (can crash here)
     ↓
-Cache Result in FeltDB
+Cache Result in FeltDB (Response + Request status update)
     ↓
 Return to User
 
@@ -279,39 +295,68 @@ On Crash:
     ↓
 App Restart
     ↓
-RecoverySystem runs
+HostFeltDBRuntime.initialize() runs recovery
     ↓
-Queries FeltDB for incomplete operations
+HostFeltDBRuntime identifies:
+  - Pending tool executions (Phase 1)
+  - Incomplete coordinator operations (Phase 2)
+  - Failed inference requests (Phase 3)
     ↓
-Uses cached results (never re-execute)
+Uses cached responses when available
+(never re-execute successful operations)
     ↓
-Creates checkpoint
+Mark incomplete requests for retry
     ↓
-Resume normal operation
+Resume normal operation with full history
+
+FeltDB Authority Semantics:
+- All writes are blocking (await completion)
+- Failures propagate immediately
+- No data loss on crash
+- State persists across restarts
 ```
 
-### Store Organization
+### FeltDB Store Organization
+
+All collections are managed by FeltDB state-first architecture with blocking writes and atomic version transitions:
 
 ```
-FeltDB Instance
-├── Phase 1 (Tool Execution)
-│   ├── Operation (durable work units)
-│   ├── Execution (tool results)
-│   └── RecoveryCheckpoint (replay markers)
+FeltDB Instance (host process)
+├── Phase 1: Tool Execution
+│   ├── operations (OperationStore)
+│   │   └── Durable work units: operationId, status, version
+│   ├── executions (ExecutionStore)
+│   │   └── Tool results: executionId, operationId, status, result
+│   └── recovery_checkpoints (RecoveryCheckpointStore)
+│       └── Recovery markers: checkpointId, frontier, status
 │
-├── Phase 2 (Coordinator)
-│   └── CoordinatorOperation (routing, streaming)
+├── Phase 2: Coordinator Durability
+│   └── coordinator_operations (CoordinatorOperationStore)
+│       └── Routing operations: operationId, kind, status, sequence
 │
-├── Phase 3 (Provider Context)
-│   ├── ProviderContext (API keys, settings)
-│   ├── InferenceRequest (cached requests)
-│   └── InferenceResponse (cached responses)
+├── Phase 3: Provider Context & Inference
+│   ├── provider_contexts (ProviderContextStore)
+│   │   └── Provider state: providerId, kind, credentials, settings, lastUsedAt
+│   ├── inference_requests (InferenceStore)
+│   │   └── Request tracking: requestId, providerId, turnId, status, attemptCount
+│   └── inference_responses (InferenceStore)
+│       └── Response cache: responseId, requestId, text, usage, duration
 │
-└── Phase 4+ (Future)
-    ├── Settings (migrate from JSON)
-    ├── UsageAnalytics (detailed metrics)
-    └── ContextCache (cross-turn state)
+└── Phase 4+: Future Collections (Planned)
+    ├── app_settings (Settings)
+    │   └── App preferences: settingId, key, value, updatedAt
+    ├── usage_analytics (Analytics)
+    │   └── Detailed metrics: analyticsId, providerId, date, metrics
+    └── context_cache (CrossTurnState)
+        └── Conversation state: cacheId, turnId, data, expiresAt
 ```
+
+**Key Properties:**
+- Each collection uses FeltDB's state-first API
+- All writes are blocking (await completion)
+- Immutable aggregates with version transitions
+- Idempotency via SHA-256 content hashing
+- Frontier-based recovery for efficient replay
 
 ## Key Design Principles
 
@@ -473,19 +518,33 @@ Application (Grok Bot)
 
 ## Conclusion
 
-We have built a production-ready durable data substrate for Grok Bot with:
+We have built a production-ready durable data substrate for Grok Bot using **FeltDB** as the exclusive abstraction layer. This implementation provides:
 
-✓ Exactly-once tool execution semantics  
-✓ Durable coordinator operations  
-✓ Provider context management  
-✓ Complete recovery protocol  
-✓ Comprehensive test coverage  
-✓ Clear path to macOS app integration  
+**Completed (Phases 1-3.3):**
+✓ Exactly-once tool execution semantics (Phase 1)
+✓ Durable coordinator operations (Phase 2)
+✓ Provider context management (Phase 3.1)
+✓ Durable provider sessions with context preservation (Phase 3.2)
+✓ Host-level FeltDB lifecycle management (Phase 3.3)
+✓ Comprehensive recovery protocol on startup
+✓ 93+ integration and unit tests
+✓ Complete TypeScript type safety
 
-Ready to proceed with Phase 3.2 (Durable Provider Session) and Phase 3.3 (Host Integration) for provider switching capability.
+**Key Architectural Benefits:**
+- **No direct SQLite access**: All persistence through FeltDB state-first API
+- **Authority semantics**: Blocking writes ensure no data loss
+- **Exactly-once guarantees**: Idempotent operations prevent duplicate execution
+- **Atomic state transitions**: Version-based immutable aggregates
+- **Self-contained app**: No external database service required
+- **Automatic recovery**: Pending operations identified and recovered on startup
+
+**Ready to proceed with:**
+- **Phase 3.4** (Gateway API) - Endpoints for provider switching
+- **Phase 3.5** (macOS Packaging) - Bundle FeltDB with app
 
 ---
 
-**Next Milestone:** Phase 3.2 completion (provider session integration)  
-**Timeline:** 3-5 days  
-**Deliverable:** Provider switching with context preservation
+**Current Status:** 4,064+ LOC, 93+ tests, 2,200+ documentation  
+**Next Milestone:** Phase 3.4 completion (Gateway API endpoints)  
+**Timeline:** 2-3 days  
+**Deliverable:** Provider switching API with inference execution endpoints
